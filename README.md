@@ -1,274 +1,114 @@
-# DataBy AI - Autonomous Data Agent
+# Gaby Explore/Exploit Manager
 
-[![Documentation Status](https://readthedocs.org/projects/databy/badge/?version=latest)](https://databy.readthedocs.io/en/latest/?version=latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://github.com/whoamimi/databy-socket/actions/workflows/test.yml/badge.svg)](.github/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10–3.13](https://img.shields.io/badge/python-3.10--3.13-blue)](https://python.org)
 
-> **Autonomous AI agent for complete data lifecycle management** DataBy AI is an intelligent, autonomous agent system designed to handle the complete data processing lifecycle without human intervention. Built with FastAPI and powered by modern AI models and swarms to faciliate main agent, Gaby who is responsible for providing end-to-end data solutions through both REST API and real-time WebSocket interfaces.
+FastAPI SSE transport server for self-directed data cleaning agent, Gaby. Implementation leverages classical decision-making algorithms to assist a single running LLM agent's reasoning loop, aligned with the same cognitive behavior driving chain-of-responsibility data pipelines (e.g. ETL workflows).
 
-## Backend Intent
+> A repository rename has been discussed (`databy-cognition` was one proposal) but nothing has been finalized — commands below use the current, real repository name and URL.
 
-This backend is designed with the needs of a solo developer in mind as an IAAS business platform, hence, this backend should support:
+## Highlights
 
-- External / Internal Platform User Authentication Reroutes.
-- Gaby AI Agent Live Broadcasting Websocket.
-- Database Platform connection & integrations.
-- AI/ML/Data Science Life cycle managers and pipelines.
-- Unifies all operating Agent's servers (e.g. sandbox).
+- **Key Feature**:
+  - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` dataclass holds normalized `exploit`/`explore` probabilities (default 0.95/0.05). Seven reasoning states are scaffolded as small `Spine`-based agents — narrate, exploit, explore, plan, revise, question, contradict — each bound to its own prompt. **Not yet wired**: `Cognitive.run_background()` currently only ever invokes `narrate`; nothing yet samples from the `exploit`/`explore` probabilities to choose between states.
+  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): `ChainStage`/`DataPipeline` define a stage-chaining contract (`forward()` validates output, updates agent state, forwards to the next stage). `DataPipeline.__init_subclass__` is meant to auto-wire a whole pipeline from a class-keyword argument, but its signature (`kwargs`) doesn't match the `chain=OrderedDict(...)` form shown in its own docstring, so that usage currently raises `TypeError`. In practice, the real data-exploration pipeline (`pipelines/data_explorer.py`: `DefineDataset → DescribeDataset → DataTyperStage`) is wired by hand via `dataclass.__post_init__` calling `set_next_stage()`, not through `__init_subclass__`.
+  - **SSE "agent room" broadcasting** (`api/socket.py`): each session is a `GabyWindow` room keyed by UUID, created via `POST /agent/start-wrangler`. `generate_stream()` polls `room.agent.state_message` every 1.5s and yields it as `state: ...\n\n` — a non-standard SSE field name, so it won't populate a browser `EventSource.onmessage` handler, which only fires on `data:` fields. `ConnectionManager` (`api/utils/manager.py`) owns room storage and a 20-minute idle-timeout countdown, but `_countdown()`'s call into `remove()` tries to cancel-and-await its own currently-running task, which raises before the room is actually deleted — so idle rooms aren't currently evicted despite the timer firing.
+  - `app/agent/memory/gatekeeper.py` provides Hugging Face and Kaggle dataset search helpers (`search_hugging_dataset`, `search_kaggle_dataset`); it does not implement a memory/episodic-storage pattern.
+  - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod.
+- **Notes**:
+    - This project was built and extended across AWS and Google hackathons. Once an AI provider is selected, the agent's sandbox can run on:
+        - AWS (SageMaker/Bedrock/S3)
+        - GCP BigQuery
+    - Intended future integration connectors: MongoDB, Redis, LiveKit, Notion, Hugging Face, Kaggle.
+- **Known issues**:
+  - `tests/test_main.py` still expects a JSON payload from `GET /`, but `app/main.py`'s root route now redirects to `/docs` — that test currently fails and the root endpoint isn't a verified contract.
+  - CI (`.github/workflows/test.yml`) installs `requirements.txt` but never installs `ruff`, so the lint step fails with `ruff: command not found` before pytest runs (pre-existing, unrelated to any README change).
+  - A clean install via `pip install -e ".[dev,test]"` doesn't pull in `huggingface_hub`/`kaggle`, which `app.agent.memory.gatekeeper` imports at module load time — importing `app.main` fails without installing them separately.
+- **Results & Conclusion**:
+  - The chain-of-responsibility *contract* (`ChainStage.forward`/`validate_stage_output`) is a clean, reusable shape for pipeline stages, but the self-registering `__init_subclass__` convenience layer on top of it isn't functional yet — stages are still wired by hand.
+  - The cognitive engine's state/probability scaffolding is in place, but the actual explore/exploit decision loop (sampling a state to run based on `CognitiveAction`) still needs to be implemented.
+  - Next: fix the `_countdown`/`remove` self-await bug, switch `generate_stream()` to standard `data:` SSE fields, and either implement `Cognitive`'s state-selection loop or keep documenting it as not-yet-wired rather than as an achieved feature.
 
-## Table of Contents
+## Project Directory Overview
 
-- [DataBy AI - Autonomous Data Agent](#databy-ai---autonomous-data-agent)
-  - [Backend Intent](#backend-intent)
-  - [Table of Contents](#table-of-contents)
-  - [Agent System](#agent-system)
-      - [Core Components](#core-components)
-      - [Pipeline Stages](#pipeline-stages)
-      - [Real-time Monitoring](#real-time-monitoring)
-  - [Project Directory Summary](#project-directory-summary)
-  - [Quick Start](#quick-start)
-    - [Prerequisites](#prerequisites)
-    - [Installation](#installation)
-    - [Running the Server](#running-the-server)
-  - [Usage](#usage)
-    - [API Endpoints](#api-endpoints)
-    - [WebSocket Interface](#websocket-interface)
-    - [CLI Commands](#cli-commands)
-  - [Development](#development)
-    - [Setup Development Environment](#setup-development-environment)
-    - [Running Tests](#running-tests)
-    - [Code Quality](#code-quality)
-  - [API Reference](#api-reference)
-  - [License](#license)
-
-## Agent System
-
-#### Core Components
-
-- **Cognitive Engine**: AI-powered decision making and strategy selection.
-- **Gen AI Agent Pipeline Manager**: Orchestrates data processing workflows.
-- **Data Pipelines**: Data wrangling stages.
-- **Memory System**: Stores knowledge and learns from past processing.
-
-#### Pipeline Stages
-
-1. **Data Exploration**: Structure analysis, type detection, basic statistics
-2. **Data Cleaning**: Data Cleaning procedures like missing data, anomalities and dedupes handling.
-3. **Data Insights & Analytics**: Structured findings and recommendations
-
-#### Real-time Monitoring
-
-The system provides real-time updates through WebSocket connections:
-- **Status Updates**: Current processing stage and progress
-- **Heartbeat Messages**: System health and performance metrics
-- **Error Notifications**: Detailed error context and recovery suggestions
-- **Completion Reports**: Final results and insights
-
-## Project Directory Summary
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DataBy AI Architecture                   │
-├─────────────────────────────────────────────────────────────┤
-│  Frontend / Clients                                         │
-│  ├─ Web Interface (WebSocket)                              │
-│  ├─ CLI Tools                                              │
-│  └─ API Clients (REST)                                     │
-├─────────────────────────────────────────────────────────────┤
-│  API Layer (FastAPI)                                       │
-│  ├─ REST Endpoints (/api/*)                               │
-│  ├─ WebSocket Handler (/agent/ws)                         │
-│  ├─ Documentation (/docs)                                 │
-│  └─ Health & Status (/health, /agent/status)             │
-├─────────────────────────────────────────────────────────────┤
-│  Agent Core                                                 │
-│  ├─ Cognitive Engine (AI Decision Making)                 │
-│  ├─ Pipeline Manager (Workflow Orchestration)             │
-│  ├─ Heartbeat System (Monitoring & Status)                │
-│  └─ Memory System (Knowledge Storage)                     │
-├─────────────────────────────────────────────────────────────┤
-│  Processing Pipelines                                       │
-│  ├─ Data Explorer (Structure Analysis)                    │
-│  ├─ Data Cleaner (Quality & Preprocessing)                │
-│  ├─ Statistical Methods (Analysis & Insights)             │
-│  └─ Missing Data Handler (Imputation Strategies)          │
-├─────────────────────────────────────────────────────────────┤
-│  Infrastructure                                             │
-│  ├─ Configuration Management                               │
-│  ├─ Logging & Monitoring                                  │
-│  └─ Settings & Environment                                │
-└─────────────────────────────────────────────────────────────┘
+```text
+databy-socket/
+├── .github/workflows/test.yml     # CI: ruff + pytest across Python 3.12/3.13 (ruff install currently missing)
+├── app/
+│   ├── main.py, cli.py            # FastAPI app assembly, `databy serve` CLI
+│   ├── api/
+│   │   ├── socket.py              # SSE agent-window + start-wrangler endpoint (generate_stream lives here)
+│   │   ├── utils/manager.py       # ConnectionManager (room storage, idle-timeout — eviction currently buggy)
+│   │   └── datasource.py, dashboard.py, mongodb.py, auth.py
+│   ├── agent/
+│   │   ├── main.py                # GabyAgent state model, GabyWindow session
+│   │   ├── core/
+│   │   │   ├── cognitive.py       # cognitive state scaffolding (narrate/exploit/explore/plan/revise/question/contradict)
+│   │   │   └── pipeline.py        # ChainStage contract + DataPipeline self-registration scaffold
+│   │   ├── memory/                # gatekeeper.py (HF/Kaggle dataset search helpers), manager.py
+│   │   ├── pipelines/             # data_explorer.py (DefineDataset→DescribeDataset→DataTyperStage), data_wrangler.py, records.py
+│   │   └── outbounds/             # aws/, bigquery/, lightning.py adapters
+│   └── utils/settings.py          # AgentBuild dataclass config tree
+├── tests/                         # agent/ and api/ coverage, incl. test_socket.py (largest suite); test_cli.py is empty
+├── conftest.py, pyproject.toml, justfile
+└── Dockerfile
 ```
 
-## Quick Start
+## System Architecture
 
-### Prerequisites
-
-- **Python 3.10+**
-- **pip** (Python package manager)
-- **Git** (for development)
-
-### Installation
-
-1. **Clone the repository**:
-
-```bash
-git clone <repository-url>
-cd databy-ai/backend
+```mermaid
+flowchart LR
+    U[Client] -->|POST /agent/start-wrangler| Manager[ConnectionManager.add]
+    Manager -->|creates + starts idle countdown| Room[GabyWindow room]
+    Manager -->|303 redirect| Window[GET /agent/room_id/clean]
+    Window -->|Accept: text/event-stream| Stream[generate_stream in socket.py]
+    Stream -->|polls every 1.5s| Room
+    Stream -->|state: message| U
 ```
 
-1. **Create virtual environment & setup env variables**:
-   Update all env variables in `.env.example` with your info.
+The Cognitive engine and `ChainStage` pipeline are not yet invoked from this request path — today a room only tracks `room.agent.state_message`, which something else must set. Wiring the Cognitive loop and the `DataExplorer`/data-wrangling pipelines into this flow is the next integration step, not a shipped behavior.
 
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+## Dev Notes
+
+- **Installation**:
+
+    ```bash
+    # Clone the repository
+    git clone https://github.com/whoamimi/databy-socket.git
+    cd databy-socket
+
+    # Create and activate environment
+    conda create -n databy-socket python=3.12 -y
+    conda activate databy-socket
+
+    # Install package + dev/test extras
+    pip install -e ".[dev,test]"
+
+    # app/agent/memory/gatekeeper.py needs these at import time;
+    # they aren't declared in pyproject.toml yet
+    pip install huggingface_hub kaggle
+
+    cp .env.example .env
+    ```
+
+- **To start**:
+
+    ```bash
+    databy serve
+    # or directly
+    uvicorn app.main:app --reload
+    ```
+
+## Citation
+
+If you use this software in your work, please cite it as follows:
+
+```bibtex
+@software{mimi2026databysocket,
+  author = {Mimi},
+  title  = {databy-socket: a cognitive-engine and chain-of-responsibility pipeline scaffold for the Gaby data-cleaning agent},
+  year   = {2026},
+  url    = {https://github.com/whoamimi/databy-socket}
+}
 ```
-
-1. **Install dependencies**:
-
-```bash
-pip install -e ".[dev,test]"
-```
-
-1. **Set up environment**:
-
-```bash
-cp .env.example .env  # Configure as needed
-```
-
-### Running the Server
-
-**Development Mode**:
-
-```bash
-python -m app serve --reload
-```
-
-**Production Mode**:
-
-```bash
-python -m app serve --host 0.0.0.0 --port 8000
-```
-
-**Using CLI**:
-
-```bash
-databy serve --port 8000
-```
-
-The server will start on `http://localhost:8000` with:
-
-- 📚 **API Documentation**: `http://localhost:8000/api/docs`
-- 🔌 **WebSocket Endpoint**: `ws://localhost:8000/agent/ws`
-- ❤️ **Health Check**: `http://localhost:8000/health`
-
-## Usage
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API metadata and version info |
-| `/health` | GET | Service health status |
-| `/agent/status` | GET | Current agent status |
-| `/agent/ws` | WebSocket | Real-time agent communication |
-
-### WebSocket Interface
-
-Connect to `ws://localhost:8000/agent/ws` for real-time communication:
-
-```javascript
-const ws = new WebSocket('ws://localhost:8000/agent/ws');
-
-// Subscribe to agent updates
-ws.send(JSON.stringify({
-    "type": "subscribe"
-}));
-
-// Get current status
-ws.send(JSON.stringify({
-    "type": "getStatus"
-}));
-
-// Request data analysis
-ws.send(JSON.stringify({
-    "type": "cleanReport"
-}));
-```
-
-### CLI Commands
-
-```bash
-# Start the server
-databy serve
-
-# Show help
-databy --help
-
-# Run data processing
-databy process --input data.csv
-
-# Check agent status
-databy status
-```
-
-## Development
-
-### Setup Development Environment
-
-1. **Install development dependencies**:
-
-```bash
-pip install -e ".[dev,test]"
-```
-
-1. **Install pre-commit hooks**:
-
-```bash
-pre-commit install
-```
-
-1. **Run development server**:
-
-```bash
-python -m app serve --reload
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=app
-
-# Run specific test file
-pytest tests/test_main.py -v
-```
-
-### Code Quality
-
-```bash
-# Format code
-black app/ tests/
-
-# Check typing
-mypy app/
-
-# Lint code
-ruff check app/
-```
-
-## API Reference
-
-Full API documentation is available at `/api/docs` when the server is running, or visit our [online documentation](https://databy.readthedocs.io).
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-This package was created with [Cookiecutter](https://github.com/audreyfeldroy/cookiecutter) and the [audreyfeldroy/cookiecutter-pypackage](https://github.com/audreyfeldroy/cookiecutter-pypackage) project template.
