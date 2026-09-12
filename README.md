@@ -6,13 +6,12 @@
 
 FastAPI SSE transport server for self-directed data cleaning agent, Gaby. Implementation leverages classical decision-making algorithms to assist a single running LLM agent's reasoning loop, aligned with the same cognitive behavior driving chain-of-responsibility data pipelines (e.g. ETL workflows).
 
-> A repository rename has been discussed (`databy-cognition` was one proposal) but nothing has been finalized — commands below use the current, real repository name and URL.
 
 ## Highlights
 
 - **Key Feature**:
   - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` dataclass holds normalized `exploit`/`explore` probabilities (default 0.95/0.05). Seven reasoning states are scaffolded as small `Spine`-based agents — narrate, exploit, explore, plan, revise, question, contradict — each bound to its own prompt. **Not yet wired**: `Cognitive.run_background()` currently only ever invokes `narrate`; nothing yet samples from the `exploit`/`explore` probabilities to choose between states.
-  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): `ChainStage`/`DataPipeline` define a stage-chaining contract (`forward()` validates output, updates agent state, forwards to the next stage). `DataPipeline.__init_subclass__` is meant to auto-wire a whole pipeline from a class-keyword argument, but its signature (`kwargs`) doesn't match the `chain=OrderedDict(...)` form shown in its own docstring, so that usage currently raises `TypeError`. In practice, the real data-exploration pipeline (`pipelines/data_explorer.py`: `DefineDataset → DescribeDataset → DataTyperStage`) is wired by hand via `dataclass.__post_init__` calling `set_next_stage()`, not through `__init_subclass__`.
+  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): `ChainStage`/`DataPipeline` define a stage-chaining contract (`forward()` validates output, updates agent state, forwards to the next stage). 
   - **SSE "agent room" broadcasting** (`api/socket.py`): each session is a `GabyWindow` room keyed by UUID, created via `POST /agent/start-wrangler`. `generate_stream()` polls `room.agent.state_message` every 1.5s and yields it as `state: ...\n\n` — a non-standard SSE field name, so it won't populate a browser `EventSource.onmessage` handler, which only fires on `data:` fields. `ConnectionManager` (`api/utils/manager.py`) owns room storage and a 20-minute idle-timeout countdown, but `_countdown()`'s call into `remove()` tries to cancel-and-await its own currently-running task, which raises before the room is actually deleted — so idle rooms aren't currently evicted despite the timer firing.
   - `app/agent/memory/gatekeeper.py` provides Hugging Face and Kaggle dataset search helpers (`search_hugging_dataset`, `search_kaggle_dataset`); it does not implement a memory/episodic-storage pattern.
   - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod.
