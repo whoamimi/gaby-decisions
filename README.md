@@ -1,274 +1,116 @@
-# DataBy AI - Autonomous Data Agent
+# databy-cognition
 
-[![Documentation Status](https://readthedocs.org/projects/databy/badge/?version=latest)](https://databy.readthedocs.io/en/latest/?version=latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+*(recommended rename of `databy-socket` — the repo's transport is SSE "agent rooms," not raw sockets; its real center of gravity is the Cognitive explore/exploit engine)*
 
-> **Autonomous AI agent for complete data lifecycle management** DataBy AI is an intelligent, autonomous agent system designed to handle the complete data processing lifecycle without human intervention. Built with FastAPI and powered by modern AI models and swarms to faciliate main agent, Gaby who is responsible for providing end-to-end data solutions through both REST API and real-time WebSocket interfaces.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10–3.13](https://img.shields.io/badge/python-3.10--3.13-blue)](https://python.org)
+[![CI](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-brightgreen)](.github/workflows/test.yml)
 
-## Backend Intent
+The most complete build of **Gaby**, my self-directed data-cleaning agent: a FastAPI platform where a Cognitive explore/exploit reasoning loop drives a chain-of-responsibility data pipeline, broadcasting its live state over per-session SSE "rooms," backed by real CI and test coverage.
 
-This backend is designed with the needs of a solo developer in mind as an IAAS business platform, hence, this backend should support:
+## Highlights
 
-- External / Internal Platform User Authentication Reroutes.
-- Gaby AI Agent Live Broadcasting Websocket.
-- Database Platform connection & integrations.
-- AI/ML/Data Science Life cycle managers and pipelines.
-- Unifies all operating Agent's servers (e.g. sandbox).
+- **Objective**: consolidate the earlier `databy-cortex` (bandit policy) and `databy-sse` (pipeline, streaming) experiments into one coherent, testable backend — a single autonomous agent that explores/exploits its way through a dataset without a human writing prompts at each step.
+- **Key Feature**:
+  - **Cognitive engine** (`core/cognitive.py`) — a `CognitiveAction` policy holds `exploit`/`explore` probabilities (default 0.95/0.05, renormalized via numpy on every adjustment) driving seven parallel reasoning "states" — narrate, contradict, exploit, explore, plan, revise, question — each a small `Spine`-based agent bound to its own YAML prompt.
+  - **Chain-of-responsibility pipeline** (`core/pipeline.py`) — `ChainBuilder`/`ChainStage`/`DataPipeline` thread a `SessionProfiler` through ordered stages (explore → clean → insights), each stage validating its output and advancing agent state before forwarding to the next.
+  - **SSE "agent room" broadcasting** (`api/socket.py`, `api/utils/manager.py`) — each session is a `GabyWindow` room keyed by UUID; a `ConnectionManager` tracks rooms with idle-timeout auto-eviction (20 min) and serves state as an `Accept: text/event-stream` feed.
+  - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod, plus a Memory subsystem (`agent/memory/gatekeeper.py`) echoing the Memory Gatekeeper pattern from `databy-bq`.
+- **Tech stack**: FastAPI + Uvicorn (uvloop/httptools), Typer/argparse CLI (`databy serve`), Ollama for local LLM inference, pydantic-settings, thin adapter stubs toward AWS (SageMaker/Bedrock/S3), GCP BigQuery, MongoDB, Redis, LiveKit, Notion, Hugging Face, and Kaggle. Packaged as a proper installable project (`pyproject.toml`, `cookiecutter-pypackage` scaffold, `justfile` dev commands).
+- **Evaluation**: a real GitHub Actions matrix (Python 3.12 / 3.13) runs `ruff check` then `pytest` on every push/PR; locally, `just qa` runs formatting, linting, type-checking (`ty`), and tests, and `just coverage` produces an HTML coverage report. `tests/api/test_socket.py` (the largest test file in the repo) covers the SSE/room lifecycle directly; note that `tests/test_main.py` currently expects a JSON root response while `app/main.py` actually redirects `/` to `/docs` — a known drift between test and implementation.
+- **Results & Conclusion**:
+  - The chain-of-responsibility pipeline plus self-registering `DataPipeline.__init_subclass__` gives a genuinely composable way to add new cleaning stages without touching a central dispatcher.
+  - Running CI + coverage on a solo sandbox project caught real drift (the `/` route test above) that would otherwise have gone unnoticed — worth keeping as the template for future Gaby sandboxes.
+  - Next: reconcile the failing root-route assertion, then decide which of the many thin cloud adapters (AWS/GCP/Mongo/Redis/LiveKit) actually gets built out versus retired as scope creep.
 
-## Table of Contents
+## Project Directory Overview
 
-- [DataBy AI - Autonomous Data Agent](#databy-ai---autonomous-data-agent)
-  - [Backend Intent](#backend-intent)
-  - [Table of Contents](#table-of-contents)
-  - [Agent System](#agent-system)
-      - [Core Components](#core-components)
-      - [Pipeline Stages](#pipeline-stages)
-      - [Real-time Monitoring](#real-time-monitoring)
-  - [Project Directory Summary](#project-directory-summary)
-  - [Quick Start](#quick-start)
-    - [Prerequisites](#prerequisites)
-    - [Installation](#installation)
-    - [Running the Server](#running-the-server)
-  - [Usage](#usage)
-    - [API Endpoints](#api-endpoints)
-    - [WebSocket Interface](#websocket-interface)
-    - [CLI Commands](#cli-commands)
-  - [Development](#development)
-    - [Setup Development Environment](#setup-development-environment)
-    - [Running Tests](#running-tests)
-    - [Code Quality](#code-quality)
-  - [API Reference](#api-reference)
-  - [License](#license)
-
-## Agent System
-
-#### Core Components
-
-- **Cognitive Engine**: AI-powered decision making and strategy selection.
-- **Gen AI Agent Pipeline Manager**: Orchestrates data processing workflows.
-- **Data Pipelines**: Data wrangling stages.
-- **Memory System**: Stores knowledge and learns from past processing.
-
-#### Pipeline Stages
-
-1. **Data Exploration**: Structure analysis, type detection, basic statistics
-2. **Data Cleaning**: Data Cleaning procedures like missing data, anomalities and dedupes handling.
-3. **Data Insights & Analytics**: Structured findings and recommendations
-
-#### Real-time Monitoring
-
-The system provides real-time updates through WebSocket connections:
-- **Status Updates**: Current processing stage and progress
-- **Heartbeat Messages**: System health and performance metrics
-- **Error Notifications**: Detailed error context and recovery suggestions
-- **Completion Reports**: Final results and insights
-
-## Project Directory Summary
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DataBy AI Architecture                   │
-├─────────────────────────────────────────────────────────────┤
-│  Frontend / Clients                                         │
-│  ├─ Web Interface (WebSocket)                              │
-│  ├─ CLI Tools                                              │
-│  └─ API Clients (REST)                                     │
-├─────────────────────────────────────────────────────────────┤
-│  API Layer (FastAPI)                                       │
-│  ├─ REST Endpoints (/api/*)                               │
-│  ├─ WebSocket Handler (/agent/ws)                         │
-│  ├─ Documentation (/docs)                                 │
-│  └─ Health & Status (/health, /agent/status)             │
-├─────────────────────────────────────────────────────────────┤
-│  Agent Core                                                 │
-│  ├─ Cognitive Engine (AI Decision Making)                 │
-│  ├─ Pipeline Manager (Workflow Orchestration)             │
-│  ├─ Heartbeat System (Monitoring & Status)                │
-│  └─ Memory System (Knowledge Storage)                     │
-├─────────────────────────────────────────────────────────────┤
-│  Processing Pipelines                                       │
-│  ├─ Data Explorer (Structure Analysis)                    │
-│  ├─ Data Cleaner (Quality & Preprocessing)                │
-│  ├─ Statistical Methods (Analysis & Insights)             │
-│  └─ Missing Data Handler (Imputation Strategies)          │
-├─────────────────────────────────────────────────────────────┤
-│  Infrastructure                                             │
-│  ├─ Configuration Management                               │
-│  ├─ Logging & Monitoring                                  │
-│  └─ Settings & Environment                                │
-└─────────────────────────────────────────────────────────────┘
+```text
+databy-socket/
+├── .github/workflows/test.yml     # CI: ruff + pytest across Python 3.12/3.13
+├── app/
+│   ├── main.py, cli.py            # FastAPI app assembly, `databy serve` CLI
+│   ├── api/
+│   │   ├── socket.py              # SSE agent-window + start-wrangler endpoint
+│   │   ├── utils/manager.py       # ConnectionManager (rooms, idle-timeout)
+│   │   └── datasource.py, dashboard.py, mongodb.py, auth.py
+│   ├── agent/
+│   │   ├── main.py                # GabyAgent state model, GabyWindow session
+│   │   ├── core/
+│   │   │   ├── cognitive.py       # explore/exploit reasoning loop
+│   │   │   └── pipeline.py        # ChainBuilder/ChainStage/DataPipeline
+│   │   ├── memory/                # gatekeeper.py, manager.py
+│   │   ├── pipelines/             # data_explorer.py, data_wrangler.py, records.py
+│   │   └── outbounds/             # aws/, bigquery/, lightning.py adapters
+│   └── utils/settings.py          # AgentBuild dataclass config tree
+├── tests/                         # mirrors app/, incl. test_socket.py (largest suite)
+├── conftest.py, pyproject.toml, justfile
+└── Dockerfile
 ```
 
-## Quick Start
+## System Architecture
 
-### Prerequisites
-
-- **Python 3.10+**
-- **pip** (Python package manager)
-- **Git** (for development)
-
-### Installation
-
-1. **Clone the repository**:
-
-```bash
-git clone <repository-url>
-cd databy-ai/backend
+```mermaid
+flowchart LR
+    U[Client] -->|POST /agent/start-wrangler| Manager[ConnectionManager]
+    Manager -->|creates| Room[GabyWindow room]
+    Room --> Cognitive[Cognitive engine: explore/exploit loop]
+    Cognitive --> Pipeline[ChainStage pipeline: explore to clean to insights]
+    Pipeline --> Memory[(Memory Gatekeeper)]
+    Room -->|SSE state_message| U
 ```
 
-1. **Create virtual environment & setup env variables**:
-   Update all env variables in `.env.example` with your info.
+Every `ChainStage.forward()` call validates its stage's output, updates the room's agent state, and recursively forwards to the next stage; `DataPipeline.__init_subclass__` wires a whole pipeline together from an `OrderedDict` of stage classes at subclass-definition time, and self-registers into a class-level services registry so new pipelines are addressable without a central switch statement.
 
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+## Dev Notes
+
+- **Requirements**
+  - Python 3.10–3.13
+  - `uv` (used by the `justfile` for cross-version testing) or a standard venv
+  - Ollama running locally or a reachable Ollama host
+
+- **Installation**:
+
+    ```bash
+    # Clone the repository
+    git clone https://github.com/whoamimi/databy-socket.git
+    cd databy-socket
+
+    # Create and activate environment
+    conda create -n databy-cognition python=3.12 -y
+    conda activate databy-cognition
+
+    # Install dependencies
+    pip install -e ".[dev,test]"
+    cp .env.example .env
+    ```
+
+- **To start**:
+
+    ```bash
+    databy serve
+    # or directly
+    uvicorn app.main:app --reload
+    ```
+
+- **Test**:
+
+    ```bash
+    just qa        # format, lint, type-check, test
+    just coverage  # coverage report
+    # or plain
+    pytest --cov=app
+    ```
+
+## Citation
+
+If you use this software in your work, please cite it as follows:
+
+```bibtex
+@software{mimi2026databycognition,
+  author = {Mimi},
+  title  = {databy-cognition: an explore/exploit cognitive engine and pipeline platform for the Gaby data-cleaning agent},
+  year   = {2026},
+  url    = {https://github.com/whoamimi/databy-socket}
+}
 ```
-
-1. **Install dependencies**:
-
-```bash
-pip install -e ".[dev,test]"
-```
-
-1. **Set up environment**:
-
-```bash
-cp .env.example .env  # Configure as needed
-```
-
-### Running the Server
-
-**Development Mode**:
-
-```bash
-python -m app serve --reload
-```
-
-**Production Mode**:
-
-```bash
-python -m app serve --host 0.0.0.0 --port 8000
-```
-
-**Using CLI**:
-
-```bash
-databy serve --port 8000
-```
-
-The server will start on `http://localhost:8000` with:
-
-- 📚 **API Documentation**: `http://localhost:8000/api/docs`
-- 🔌 **WebSocket Endpoint**: `ws://localhost:8000/agent/ws`
-- ❤️ **Health Check**: `http://localhost:8000/health`
-
-## Usage
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API metadata and version info |
-| `/health` | GET | Service health status |
-| `/agent/status` | GET | Current agent status |
-| `/agent/ws` | WebSocket | Real-time agent communication |
-
-### WebSocket Interface
-
-Connect to `ws://localhost:8000/agent/ws` for real-time communication:
-
-```javascript
-const ws = new WebSocket('ws://localhost:8000/agent/ws');
-
-// Subscribe to agent updates
-ws.send(JSON.stringify({
-    "type": "subscribe"
-}));
-
-// Get current status
-ws.send(JSON.stringify({
-    "type": "getStatus"
-}));
-
-// Request data analysis
-ws.send(JSON.stringify({
-    "type": "cleanReport"
-}));
-```
-
-### CLI Commands
-
-```bash
-# Start the server
-databy serve
-
-# Show help
-databy --help
-
-# Run data processing
-databy process --input data.csv
-
-# Check agent status
-databy status
-```
-
-## Development
-
-### Setup Development Environment
-
-1. **Install development dependencies**:
-
-```bash
-pip install -e ".[dev,test]"
-```
-
-1. **Install pre-commit hooks**:
-
-```bash
-pre-commit install
-```
-
-1. **Run development server**:
-
-```bash
-python -m app serve --reload
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=app
-
-# Run specific test file
-pytest tests/test_main.py -v
-```
-
-### Code Quality
-
-```bash
-# Format code
-black app/ tests/
-
-# Check typing
-mypy app/
-
-# Lint code
-ruff check app/
-```
-
-## API Reference
-
-Full API documentation is available at `/api/docs` when the server is running, or visit our [online documentation](https://databy.readthedocs.io).
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-This package was created with [Cookiecutter](https://github.com/audreyfeldroy/cookiecutter) and the [audreyfeldroy/cookiecutter-pypackage](https://github.com/audreyfeldroy/cookiecutter-pypackage) project template.
