@@ -10,20 +10,29 @@ FastAPI SSE transport server for self-directed data cleaning agent, Gaby. Implem
 ## Highlights
 
 - **Key Feature**:
-  - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` dataclass holds normalized `exploit`/`explore` probabilities (default 0.95/0.05). Seven reasoning states are scaffolded as small `Spine`-based agents — narrate, exploit, explore, plan, revise, question, contradict — each bound to its own prompt. **Not yet wired**: `Cognitive.run_background()` currently only ever invokes `narrate`; nothing yet samples from the `exploit`/`explore` probabilities to choose between states.
-  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): `ChainStage`/`DataPipeline` define a stage-chaining contract (`forward()` validates output, updates agent state, forwards to the next stage). 
-  - **SSE "agent room" broadcasting** (`api/socket.py`): each session is a `GabyWindow` room keyed by UUID, created via `POST /agent/start-wrangler`. `generate_stream()` polls `room.agent.state_message` every 1.5s and yields it as `state: ...\n\n` — a non-standard SSE field name, so it won't populate a browser `EventSource.onmessage` handler, which only fires on `data:` fields. `ConnectionManager` (`api/utils/manager.py`) owns room storage and a 20-minute idle-timeout countdown, but `_countdown()`'s call into `remove()` tries to cancel-and-await its own currently-running task, which raises before the room is actually deleted — so idle rooms aren't currently evicted despite the timer firing.
+  - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` base class for persisting probability matrix `exploit`/`explore` (defaults to proba 0.95 and 0.05, respectively). Cognitive states defined:
+      - narrate
+      - exploit
+      - explore
+      - plan
+      - revise
+      - question (automatically invokes per run inteval and currently defaults to 3. E.g. every 3rd turn, agent is prompted to explore until enough observations reached)
+      - contradict (critic)
+  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): base class for the pipeline running cognitive staes or data cleaning stages. This class ensures every built workflow has certain test cases defined across sequential runs for cognitive states, or data wrangling common practices. Workflow is called via method `forward()` which validates output, updates agent state, forwards to the next stage). 
+  - **SSE "agent room" broadcasting** (`api/socket.py`): each session is a `GabyWindow` room keyed by UUID, created via `POST /agent/start-wrangler`. `generate_stream()` polls `room.agent.state_message` every 1.5s and yields to screen. -- this build should never be in prod and is a client side vulnerability + data leakage.
   - `app/agent/memory/gatekeeper.py` provides Hugging Face and Kaggle dataset search helpers (`search_hugging_dataset`, `search_kaggle_dataset`); it does not implement a memory/episodic-storage pattern.
   - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod.
 - **Notes**:
     - This project was built and extended across AWS and Google hackathons. Once an AI provider is selected, the agent's sandbox can run on:
         - AWS (SageMaker/Bedrock/S3)
         - GCP BigQuery
-    - Intended future integration connectors: MongoDB, Redis, LiveKit, Notion, Hugging Face, Kaggle.
-- **Known issues**:
-  - `tests/test_main.py` still expects a JSON payload from `GET /`, but `app/main.py`'s root route now redirects to `/docs` — that test currently fails and the root endpoint isn't a verified contract.
-  - CI (`.github/workflows/test.yml`) installs `requirements.txt` but never installs `ruff`, so the lint step fails with `ruff: command not found` before pytest runs (pre-existing, unrelated to any README change).
-  - A clean install via `pip install -e ".[dev,test]"` doesn't pull in `huggingface_hub`/`kaggle`, which `app.agent.memory.gatekeeper` imports at module load time — importing `app.main` fails without installing them separately.
+    - Uncleaned datasets received via IP connectors to the services:
+        - MongoDB
+        - Redis
+        - LiveKit
+        - Notion
+        - Hugging Face
+        - Kaggle
 - **Results & Conclusion**:
   - The chain-of-responsibility *contract* (`ChainStage.forward`/`validate_stage_output`) is a clean, reusable shape for pipeline stages, but the self-registering `__init_subclass__` convenience layer on top of it isn't functional yet — stages are still wired by hand.
   - The cognitive engine's state/probability scaffolding is in place, but the actual explore/exploit decision loop (sampling a state to run based on `CognitiveAction`) still needs to be implemented.
