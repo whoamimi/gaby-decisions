@@ -1,61 +1,56 @@
 # Gaby Explore/Exploit Manager
 
+[![Tests](https://github.com/whoamimi/databy-socket/actions/workflows/test.yml/badge.svg)](.github/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10–3.13](https://img.shields.io/badge/python-3.10--3.13-blue)](https://python.org)
-[![CI](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-brightgreen)](.github/workflows/test.yml)
 
-FastAPI SSE transport server for self-directed data cleaning agent, Gaby. Implementation leverages classical decision making algorithms to assist single running LLM agent's reasoning loop, which aligns with the same cognitive behavior in driving chain-of-responsibility in building data pipelines e.g. ETL workflows.
+FastAPI SSE transport server for self-directed data cleaning agent, Gaby. Implementation leverages classical decision-making algorithms to assist a single running LLM agent's reasoning loop, aligned with the same cognitive behavior driving chain-of-responsibility data pipelines (e.g. ETL workflows).
+
+> A repository rename has been discussed (`databy-cognition` was one proposal) but nothing has been finalized — commands below use the current, real repository name and URL.
 
 ## Highlights
 
 - **Key Feature**:
-  - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` policy holds `exploit`/`explore` probabilities (initial state is default to 0.95 and 0.05 proba, respectively). This code design ensures all cognitive states is implemented as a function with defined pre and post validations/guardrails. Cognitive states:
-      - narrate
-      - exploit
-      - explore
-      - plan
-      - revise
-      - question (doubt)
-      - contradict (critic, negative)
-  - **Chained states** (`core/pipeline.py`): `ChainBuilder`/`ChainStage`/`DataPipeline` thread a `SessionProfiler` through ordered stages in reasoning and building data pipelines. For example: explore → clean → insights, where each stage validates its output before forwarding to the next.
-  - **SSE "agent room" broadcasting** (`api/socket.py`, `api/utils/manager.py`): each session is a `GabyWindow` room keyed by UUID; a `ConnectionManager` tracks rooms with idle-timeout auto-eviction (20 min) and serves state as an `Accept: text/event-stream` feed.
-  - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod, plus a Memory subsystem (`agent/memory/gatekeeper.py`) echoing the Memory Gatekeeper pattern from `databy-bq`.
+  - **Cognitive engine** (`core/cognitive.py`): a `CognitiveAction` dataclass holds normalized `exploit`/`explore` probabilities (default 0.95/0.05). Seven reasoning states are scaffolded as small `Spine`-based agents — narrate, exploit, explore, plan, revise, question, contradict — each bound to its own prompt. **Not yet wired**: `Cognitive.run_background()` currently only ever invokes `narrate`; nothing yet samples from the `exploit`/`explore` probabilities to choose between states.
+  - **Chain-of-responsibility pipeline** (`core/pipeline.py`): `ChainStage`/`DataPipeline` define a stage-chaining contract (`forward()` validates output, updates agent state, forwards to the next stage). `DataPipeline.__init_subclass__` is meant to auto-wire a whole pipeline from a class-keyword argument, but its signature (`kwargs`) doesn't match the `chain=OrderedDict(...)` form shown in its own docstring, so that usage currently raises `TypeError`. In practice, the real data-exploration pipeline (`pipelines/data_explorer.py`: `DefineDataset → DescribeDataset → DataTyperStage`) is wired by hand via `dataclass.__post_init__` calling `set_next_stage()`, not through `__init_subclass__`.
+  - **SSE "agent room" broadcasting** (`api/socket.py`): each session is a `GabyWindow` room keyed by UUID, created via `POST /agent/start-wrangler`. `generate_stream()` polls `room.agent.state_message` every 1.5s and yields it as `state: ...\n\n` — a non-standard SSE field name, so it won't populate a browser `EventSource.onmessage` handler, which only fires on `data:` fields. `ConnectionManager` (`api/utils/manager.py`) owns room storage and a 20-minute idle-timeout countdown, but `_countdown()`'s call into `remove()` tries to cancel-and-await its own currently-running task, which raises before the room is actually deleted — so idle rooms aren't currently evicted despite the timer firing.
+  - `app/agent/memory/gatekeeper.py` provides Hugging Face and Kaggle dataset search helpers (`search_hugging_dataset`, `search_kaggle_dataset`); it does not implement a memory/episodic-storage pattern.
+  - Environment-aware configuration: a nested frozen-dataclass `AgentBuild` tree loads different YAML model catalogues for dev vs. prod.
 - **Notes**:
-    - This project was built and extended from AWS & Google Hackathons. event of hackathons. Once AI provider is defined, the user can select the appropriate cloud service as agent's sandbox:
+    - This project was built and extended across AWS and Google hackathons. Once an AI provider is selected, the agent's sandbox can run on:
         - AWS (SageMaker/Bedrock/S3)
         - GCP BigQuery
-    - This codebase was intended to be extended as integration connector to:
-      - MongoDB
-      - Redis
-      - LiveKit
-      - Notion
-      - Hugging Face
-      - Kaggle
+    - Intended future integration connectors: MongoDB, Redis, LiveKit, Notion, Hugging Face, Kaggle.
+- **Known issues**:
+  - `tests/test_main.py` still expects a JSON payload from `GET /`, but `app/main.py`'s root route now redirects to `/docs` — that test currently fails and the root endpoint isn't a verified contract.
+  - CI (`.github/workflows/test.yml`) installs `requirements.txt` but never installs `ruff`, so the lint step fails with `ruff: command not found` before pytest runs (pre-existing, unrelated to any README change).
+  - A clean install via `pip install -e ".[dev,test]"` doesn't pull in `huggingface_hub`/`kaggle`, which `app.agent.memory.gatekeeper` imports at module load time — importing `app.main` fails without installing them separately.
 - **Results & Conclusion**:
-  - The cognitive states could be optimized for the way they are defined in the system prompts to agents.
-  - The chain-of-responsibility pipeline plus self-registering `DataPipeline.__init_subclass__` gives a genuinely composable way to add new cleaning stages without touching a central dispatcher.
+  - The chain-of-responsibility *contract* (`ChainStage.forward`/`validate_stage_output`) is a clean, reusable shape for pipeline stages, but the self-registering `__init_subclass__` convenience layer on top of it isn't functional yet — stages are still wired by hand.
+  - The cognitive engine's state/probability scaffolding is in place, but the actual explore/exploit decision loop (sampling a state to run based on `CognitiveAction`) still needs to be implemented.
+  - Next: fix the `_countdown`/`remove` self-await bug, switch `generate_stream()` to standard `data:` SSE fields, and either implement `Cognitive`'s state-selection loop or keep documenting it as not-yet-wired rather than as an achieved feature.
 
 ## Project Directory Overview
 
 ```text
 databy-socket/
-├── .github/workflows/test.yml     # CI: ruff + pytest across Python 3.12/3.13
+├── .github/workflows/test.yml     # CI: ruff + pytest across Python 3.12/3.13 (ruff install currently missing)
 ├── app/
 │   ├── main.py, cli.py            # FastAPI app assembly, `databy serve` CLI
 │   ├── api/
-│   │   ├── socket.py              # SSE agent-window + start-wrangler endpoint
-│   │   ├── utils/manager.py       # ConnectionManager (rooms, idle-timeout)
+│   │   ├── socket.py              # SSE agent-window + start-wrangler endpoint (generate_stream lives here)
+│   │   ├── utils/manager.py       # ConnectionManager (room storage, idle-timeout — eviction currently buggy)
 │   │   └── datasource.py, dashboard.py, mongodb.py, auth.py
 │   ├── agent/
 │   │   ├── main.py                # GabyAgent state model, GabyWindow session
 │   │   ├── core/
-│   │   │   ├── cognitive.py       # explore/exploit reasoning loop
-│   │   │   └── pipeline.py        # ChainBuilder/ChainStage/DataPipeline
-│   │   ├── memory/                # gatekeeper.py, manager.py
-│   │   ├── pipelines/             # data_explorer.py, data_wrangler.py, records.py
+│   │   │   ├── cognitive.py       # cognitive state scaffolding (narrate/exploit/explore/plan/revise/question/contradict)
+│   │   │   └── pipeline.py        # ChainStage contract + DataPipeline self-registration scaffold
+│   │   ├── memory/                # gatekeeper.py (HF/Kaggle dataset search helpers), manager.py
+│   │   ├── pipelines/             # data_explorer.py (DefineDataset→DescribeDataset→DataTyperStage), data_wrangler.py, records.py
 │   │   └── outbounds/             # aws/, bigquery/, lightning.py adapters
 │   └── utils/settings.py          # AgentBuild dataclass config tree
-├── tests/                         # mirrors app/, incl. test_socket.py (largest suite)
+├── tests/                         # agent/ and api/ coverage, incl. test_socket.py (largest suite); test_cli.py is empty
 ├── conftest.py, pyproject.toml, justfile
 └── Dockerfile
 ```
@@ -64,15 +59,15 @@ databy-socket/
 
 ```mermaid
 flowchart LR
-    U[Client] -->|POST /agent/start-wrangler| Manager[ConnectionManager]
-    Manager -->|creates| Room[GabyWindow room]
-    Room --> Cognitive[Cognitive engine: explore/exploit loop]
-    Cognitive --> Pipeline[ChainStage pipeline: explore to clean to insights]
-    Pipeline --> Memory[(Memory Gatekeeper)]
-    Room -->|SSE state_message| U
+    U[Client] -->|POST /agent/start-wrangler| Manager[ConnectionManager.add]
+    Manager -->|creates + starts idle countdown| Room[GabyWindow room]
+    Manager -->|303 redirect| Window[GET /agent/room_id/clean]
+    Window -->|Accept: text/event-stream| Stream[generate_stream in socket.py]
+    Stream -->|polls every 1.5s| Room
+    Stream -->|state: message| U
 ```
 
-Every `ChainStage.forward()` call validates its stage's output, updates the room's agent state, and recursively forwards to the next stage; `DataPipeline.__init_subclass__` wires a whole pipeline together from an `OrderedDict` of stage classes at subclass-definition time, and self-registers into a class-level services registry so new pipelines are addressable without a central switch statement.
+The Cognitive engine and `ChainStage` pipeline are not yet invoked from this request path — today a room only tracks `room.agent.state_message`, which something else must set. Wiring the Cognitive loop and the `DataExplorer`/data-wrangling pipelines into this flow is the next integration step, not a shipped behavior.
 
 ## Dev Notes
 
@@ -80,15 +75,20 @@ Every `ChainStage.forward()` call validates its stage's output, updates the room
 
     ```bash
     # Clone the repository
-    git clone https://github.com/whoamimi/gaby-decision-making.git
-    cd gaby-decision-making
+    git clone https://github.com/whoamimi/databy-socket.git
+    cd databy-socket
 
     # Create and activate environment
-    conda create -n databy-cognition python=3.12 -y
-    conda activate databy-cognition
+    conda create -n databy-socket python=3.12 -y
+    conda activate databy-socket
 
-    # Install dependencies
+    # Install package + dev/test extras
     pip install -e ".[dev,test]"
+
+    # app/agent/memory/gatekeeper.py needs these at import time;
+    # they aren't declared in pyproject.toml yet
+    pip install huggingface_hub kaggle
+
     cp .env.example .env
     ```
 
@@ -99,16 +99,16 @@ Every `ChainStage.forward()` call validates its stage's output, updates the room
     # or directly
     uvicorn app.main:app --reload
     ```
-    
+
 ## Citation
 
 If you use this software in your work, please cite it as follows:
 
 ```bibtex
-@software{mimi2026databycognition,
+@software{mimi2026databysocket,
   author = {Mimi},
-  title  = {gaby-decision-making: an explore/exploit cognitive engine and pipeline platform for the Gaby data-cleaning agent},
+  title  = {databy-socket: a cognitive-engine and chain-of-responsibility pipeline scaffold for the Gaby data-cleaning agent},
   year   = {2026},
-  url    = {https://github.com/whoamimi/gaby-decision-making}
+  url    = {https://github.com/whoamimi/databy-socket}
 }
 ```
